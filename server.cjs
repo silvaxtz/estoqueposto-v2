@@ -74,7 +74,7 @@ app.post('/api/login',(req,res)=>{
 app.post('/api/logout',(req,res)=>req.session.destroy(()=>{res.clearCookie('estoque.sid');res.json({ok:true})}));
 app.get('/api/session',(req,res)=>res.json({loggedIn:!!req.session?.loggedIn}));
 app.use('/api', (req,res,next)=>req.path==='/login'||req.path==='/logout'||req.path==='/session'?next():requireLogin(req,res,next));
-app.get('/app',(req,res)=>res.sendFile(path.join(__dirname,'src/index.html')));
+app.get('/app',requireLogin,(req,res)=>res.sendFile(path.join(__dirname,'src/index.html')));
 app.get('/api/dashboard',(req,res)=>{
  const products=db.prepare('SELECT COUNT(*) n FROM products WHERE active=1').get().n, units=db.prepare('SELECT COALESCE(SUM(stock),0) n FROM products WHERE active=1').get().n;
  const low=db.prepare('SELECT COUNT(*) n FROM products WHERE active=1 AND stock<=min_stock').get().n;
