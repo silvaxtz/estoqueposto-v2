@@ -80,8 +80,7 @@ app.get('/api/dashboard',(req,res)=>{
  const low=db.prepare('SELECT COUNT(*) n FROM products WHERE active=1 AND stock<=min_stock').get().n;
  const today=db.prepare("SELECT COALESCE(SUM(quantity),0) n FROM movements WHERE type='saida' AND date(created_at)=date('now','localtime')").get().n;
  const sales=db.prepare("SELECT COALESCE(SUM(quantity*unit_price),0) n FROM movements WHERE type='saida' AND date(created_at)=date('now','localtime')").get().n;
- const stockValue=db.prepare('SELECT COALESCE(SUM(stock*purchase_price),0) n FROM products WHERE active=1').get().n;
- const totalOut=db.prepare("SELECT COALESCE(SUM(quantity),0) n FROM movements WHERE type IN ('saida','perda')").get().n;
+  const totalOut=db.prepare("SELECT COALESCE(SUM(quantity),0) n FROM movements WHERE type IN ('saida','perda')").get().n;
  const totalSales=db.prepare("SELECT COALESCE(SUM(quantity*unit_price),0) n FROM movements WHERE type='saida'").get().n;
  const totalLoss=db.prepare("SELECT COALESCE(SUM(quantity),0) n FROM movements WHERE type='perda'").get().n;
  const monthOut=db.prepare("SELECT COALESCE(SUM(quantity),0) n FROM movements WHERE type='saida' AND strftime('%Y-%m',created_at)=strftime('%Y-%m','now','localtime')").get().n;
@@ -89,8 +88,9 @@ app.get('/api/dashboard',(req,res)=>{
  const categoryOut=db.prepare("SELECT c.name category,COALESCE(SUM(m.quantity),0) qty FROM categories c LEFT JOIN products p ON p.category=c.name LEFT JOIN movements m ON m.product_id=p.id AND m.type='saida' GROUP BY c.name ORDER BY c.id").all();
  const attention=db.prepare('SELECT id,name,category,stock,min_stock FROM products WHERE active=1 AND (stock<=0 OR (min_stock>0 AND stock<=min_stock)) ORDER BY stock,name').all();
  const allProducts=db.prepare('SELECT * FROM products WHERE active=1 ORDER BY category,name').all();
- res.json({products,units,low,today,sales,stockValue,totalOut,totalSales,totalLoss,monthOut,daily,categoryOut,attention,allProducts});
+ res.json({products,units,low,today,sales,totalOut,totalSales,totalLoss,monthOut,daily,categoryOut,attention,allProducts});
 });
+app.post('/api/admin/stock-value',(req,res)=>{if(String(req.body?.password||'')!==ADMIN_PASSWORD)return res.status(403).json({error:'Senha incorreta.'});const value=db.prepare('SELECT COALESCE(SUM(stock*purchase_price),0) n FROM products WHERE active=1').get().n;res.json({value})});
 app.get('/api/categories',(req,res)=>res.json(db.prepare('SELECT name FROM categories ORDER BY id').all()));
 app.get('/api/products',(req,res)=>{const c=req.query.category||'Todos';res.json(c==='Todos'?db.prepare('SELECT * FROM products WHERE active=1 ORDER BY category,name').all():db.prepare('SELECT * FROM products WHERE active=1 AND category=? ORDER BY name').all(c))});
 app.get('/api/sellers',(req,res)=>res.json(db.prepare('SELECT * FROM sellers WHERE active=1 ORDER BY name').all()));
@@ -105,7 +105,10 @@ app.post('/api/movements',(req,res)=>{try{const m=req.body,ad=m.type==='saida'?n
 app.post('/api/movements/delete-sale',(req,res)=>{try{const d=req.body,ad=requireAdmin(d),sale=db.prepare("SELECT id,product_id,quantity FROM movements WHERE id=? AND type='saida'").get(d.id);if(!sale)throw Error('Venda não encontrada ou não pode ser excluída.');const p=db.prepare('SELECT name,stock FROM products WHERE id=?').get(sale.product_id);db.transaction(()=>{db.prepare('UPDATE products SET stock=stock+? WHERE id=?').run(sale.quantity,sale.product_id);db.prepare("DELETE FROM movements WHERE id=? AND type='saida'").run(d.id);audit({actor:ad.actor,action:'Exclusão de venda / estorno',entityType:'venda',entityId:d.id,item:p.name,oldQuantity:p.stock,newQuantity:p.stock+sale.quantity,reason:ad.reason,details:{quantidadeEstornada:sale.quantity}})})();res.json(true)}catch(e){res.status(400).json({error:e.message})}});
 app.get('/api/export.csv',(req,res)=>{const rows=db.prepare("SELECT m.id,m.created_at,m.type,p.code,p.name product,m.quantity,COALESCE(s.name,'—') seller,m.unit_price,(m.quantity*m.unit_price) total,m.note FROM movements m JOIN products p ON p.id=m.product_id LEFT JOIN sellers s ON s.id=m.seller_id ORDER BY m.id DESC").all();const header=['ID','Data','Tipo','Código','Produto','Quantidade','Vendedor','Preço unitário','Total','Observação'];const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';const csv='\uFEFF'+[header,...rows.map(r=>[r.id,r.created_at,r.type,r.code,r.product,r.quantity,r.seller,r.unit_price,r.total,r.note])].map(r=>r.map(q).join(';')).join('\r\n');res.setHeader('Content-Type','text/csv; charset=utf-8');res.setHeader('Content-Disposition','attachment; filename="relatorio-estoque-atualize.csv"');res.send(csv)});
 app.get('/api/backup',(req,res)=>{const temp=path.join(os.tmpdir(),'backup-estoque-'+Date.now()+'.db');db.backup(temp).then(()=>res.download(temp,'backup-estoque-atualize.db',()=>fs.rm(temp,{force:true},()=>{}))).catch(()=>res.status(500).json({error:'Falha ao gerar backup.'}))});
-app.use(express.static(path.join(__dirname),{index:false, dotfiles:'deny'}));
+app.use('/assets',express.static(path.join(__dirname,'assets'),{dotfiles:'deny',index:false}));
+app.get('/styles.css',(req,res)=>res.sendFile(path.join(__dirname,'src/styles.css')));
+app.get('/renderer.js',(req,res)=>res.sendFile(path.join(__dirname,'src/renderer.js')));
+app.get('/web-api.js',(req,res)=>res.sendFile(path.join(__dirname,'src/web-api.js')));
 app.get('*',(req,res)=>res.redirect(req.session?.loggedIn?'/app':'/'));
 app.use((err,req,res,next)=>{console.error(err);res.status(500).json({error:'Erro interno do servidor.'})});
 app.listen(PORT,'0.0.0.0',()=>console.log('Estoque Posto V2 web disponível na porta '+PORT));
