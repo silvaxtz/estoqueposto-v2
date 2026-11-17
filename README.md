@@ -73,8 +73,8 @@ A branch \`web-conversion\` adiciona um servidor web que mantém o SQLite no com
 4. Execute \`npm run web\`.
 5. Acesse \`http://localhost:3000\` no próprio computador.
 
-A senha administrativa das operações protegidas continua sendo validada no servidor. A senha de entrada no sistema é separada e configurada pelo responsável do posto. Não coloque senhas em arquivos públicos nem no Git.
+A senha administrativa das operações protegidas é obrigatória e validada no servidor; não existe senha administrativa padrão no servidor web. A senha de entrada no sistema é separada e configurada pelo responsável do posto. Tentativas incorretas são limitadas e as sessões ficam armazenadas no próprio SQLite. Não coloque senhas em arquivos públicos nem no Git.
 
-**Atenção:** esta branch ainda precisa ser testada no computador que contém o banco real. Não exponha a porta do servidor diretamente à internet. Para acesso externo, configure um túnel HTTPS seguro no computador servidor. Não use esta versão em operação real antes de validar login, banco, permissões, backup e todas as movimentações com uma cópia de teste do banco.
+**Atenção:** esta branch ainda precisa ser testada no computador que contém o banco real. Não exponha a porta do servidor diretamente à internet. Para acesso externo, configure um túnel HTTPS seguro no computador servidor. Não use esta versão em operação real antes de validar login, banco, permissões, backup e todas as movimentações com uma cópia de teste do banco. A branch ainda não foi testada em execução real nem publicada no endereço do GitHub Pages.
 
 O banco usado pelo servidor é \`%APPDATA%/estoque-grupo-atualize-v2/estoque-atualize.db\`, o mesmo caminho de dados isolado configurado pelo V2 desktop.
