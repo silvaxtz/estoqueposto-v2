@@ -1,16 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('estoque', {
+  authorizeAdmin: (data) => ipcRenderer.invoke('admin:authorize', data),
+  audit: () => ipcRenderer.invoke('audit:list'),
   dashboard: () => ipcRenderer.invoke('dashboard:get'),
   categories: () => ipcRenderer.invoke('categories:list'),
-  addCategory: (name) => ipcRenderer.invoke('categories:add', name),
+  addCategory: (data) => ipcRenderer.invoke('categories:add', data),
   products: (category) => ipcRenderer.invoke('products:list', category),
   saveProduct: (p) => ipcRenderer.invoke('products:save', p),
-  deactivateProduct: (id) => ipcRenderer.invoke('products:deactivate', id),
+  deactivateProduct: (data) => ipcRenderer.invoke('products:deactivate', data),
   sellers: () => ipcRenderer.invoke('sellers:list'),
-  addSeller: (name) => ipcRenderer.invoke('sellers:add', name),
+  addSeller: (data) => ipcRenderer.invoke('sellers:add', data),
   movements: (limit) => ipcRenderer.invoke('movements:list', limit),
   addMovement: (m) => ipcRenderer.invoke('movements:add', m),
-  deleteSale: (id) => ipcRenderer.invoke('movements:deleteSale', id),
+  deleteSale: (data) => ipcRenderer.invoke('movements:deleteSale', data),
   exportCsv: () => ipcRenderer.invoke('reports:csv'),
   backup: () => ipcRenderer.invoke('backup:save')
 });

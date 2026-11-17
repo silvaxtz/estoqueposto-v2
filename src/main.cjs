@@ -1,9 +1,21 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const Database = require('better-sqlite3');
 
 let db;
+const adminSessions = new Map();
+const ADMIN_PASSWORD = '9963';
+function requireAdmin(payload) {
+  const token = payload?.admin?.token, saved = token ? adminSessions.get(token) : null;
+  if (!saved || saved.expiresAt < Date.now()) { if (token) adminSessions.delete(token); throw new Error('Autorização administrativa necessária ou expirada.'); }
+  adminSessions.delete(token); return saved;
+}
+function auditLog(x) {
+  db.prepare('INSERT INTO audit_logs(actor,action,entity_type,entity_id,item,old_quantity,new_quantity,reason,details) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(x.actor,x.action,x.entityType,x.entityId ?? null,x.item ?? null,x.oldQuantity ?? null,x.newQuantity ?? null,x.reason,x.details ? JSON.stringify(x.details) : null);
+}
 function initDb() {
   const dbPath = path.join(app.getPath('userData'), 'estoque-atualize.db');
   db = new Database(dbPath);
@@ -30,6 +42,7 @@ function initDb() {
       name TEXT NOT NULL UNIQUE,
       active INTEGER NOT NULL DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id INTEGER, item TEXT, old_quantity INTEGER, new_quantity INTEGER, reason TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
     CREATE TABLE IF NOT EXISTS movements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       product_id INTEGER NOT NULL REFERENCES products(id),
@@ -114,11 +127,18 @@ ipcMain.handle('dashboard:get', () => {
   return { products, units, low, today, sales, stockValue, totalOut, totalSales, totalLoss, monthOut, daily, categoryOut, attention, allProducts };
 });
 ipcMain.handle('categories:list', () => db.prepare('SELECT name FROM categories ORDER BY id').all());
-ipcMain.handle('categories:add', (_, name) => {
+ipcMain.handle('admin:authorize', (_, data) => {
+  if (String(data?.password || '') !== ADMIN_PASSWORD) throw new Error('Senha administrativa incorreta.');
+  const actor=String(data?.actor||'').trim(), reason=String(data?.reason||'').trim();
+  if (!actor || !reason) throw new Error('Informe o responsável e o motivo da operação.');
+  const token=crypto.randomUUID(); adminSessions.set(token,{actor,reason,expiresAt:Date.now()+120000}); return {token,actor,reason};
+});
+ipcMain.handle('categories:add', (_, data) => {
+  const admin=requireAdmin(data), name=data.name;
   const clean = String(name || '').trim();
   if (!clean) throw new Error('Informe o nome da categoria.');
   if (clean.length > 40) throw new Error('Use até 40 caracteres.');
-  try { db.prepare('INSERT INTO categories(name) VALUES (?)').run(clean); }
+  try { db.prepare('INSERT INTO categories(name) VALUES (?)').run(clean); auditLog({actor:admin.actor,action:'Criação de categoria',entityType:'categoria',item:clean,reason:admin.reason}); }
   catch (e) { if (String(e.message).includes('UNIQUE')) throw new Error('Essa categoria já existe.'); throw e; }
   return true;
 });
@@ -127,50 +147,65 @@ ipcMain.handle('products:list', (_, category='Todos') => {
   return db.prepare('SELECT * FROM products WHERE active=1 AND category=? ORDER BY name').all(category);
 });
 ipcMain.handle('products:save', (_, p) => {
+  const admin=requireAdmin(p);
   if (!p.name?.trim()) throw new Error('Informe o nome do produto.');
   if (p.id) {
+    const before=db.prepare('SELECT * FROM products WHERE id=?').get(p.id); if (!before) throw new Error('Produto não encontrado.');
     db.prepare(`UPDATE products SET code=?,name=?,category=?,unit=?,units_per_box=?,min_stock=?,purchase_price=?,sale_price=? WHERE id=?`)
       .run(p.code||null,p.name.trim(),p.category,p.unit||'un',p.units_per_box||null,Number(p.min_stock)||0,Number(p.purchase_price)||0,Number(p.sale_price)||0,p.id);
-    return p.id;
+    auditLog({actor:admin.actor,action:'Edição de produto',entityType:'produto',entityId:p.id,item:p.name,oldQuantity:before.stock,newQuantity:before.stock,reason:admin.reason,details:{antes:before,depois:db.prepare('SELECT * FROM products WHERE id=?').get(p.id)}}); return p.id;
   }
   const result = db.prepare(`INSERT INTO products(code,name,category,unit,units_per_box,stock,min_stock,purchase_price,sale_price)
     VALUES (?,?,?,?,?,?,?,?,?)`).run(p.code||null,p.name.trim(),p.category,p.unit||'un',p.units_per_box||null,Number(p.units_per_box)||0,Number(p.min_stock)||0,Number(p.purchase_price)||0,Number(p.sale_price)||0);
-  return result.lastInsertRowid;
+  auditLog({actor:admin.actor,action:'Cadastro de produto',entityType:'produto',entityId:result.lastInsertRowid,item:p.name,oldQuantity:0,newQuantity:Number(p.units_per_box)||0,reason:admin.reason}); return result.lastInsertRowid;
 });
-ipcMain.handle('products:deactivate', (_, id) => db.prepare('UPDATE products SET active=0 WHERE id=?').run(id).changes);
+ipcMain.handle('products:deactivate', (_, data) => {
+  const admin=requireAdmin(data), product=db.prepare('SELECT * FROM products WHERE id=? AND active=1').get(data.id); if (!product) throw new Error('Produto não encontrado.');
+  const changed=db.prepare('UPDATE products SET active=0 WHERE id=?').run(data.id).changes;
+  if (changed) auditLog({actor:admin.actor,action:'Desativação de produto',entityType:'produto',entityId:data.id,item:product.name,oldQuantity:product.stock,newQuantity:product.stock,reason:admin.reason}); return changed;
+});
 ipcMain.handle('sellers:list', () => db.prepare('SELECT * FROM sellers WHERE active=1 ORDER BY name').all());
-ipcMain.handle('sellers:add', (_, name) => {
+ipcMain.handle('sellers:add', (_, data) => {
+  const admin=requireAdmin(data), name=data.name;
   if (!name?.trim()) throw new Error('Informe o nome do vendedor.');
-  return db.prepare('INSERT INTO sellers(name) VALUES (?)').run(name.trim()).lastInsertRowid;
+  const id=db.prepare('INSERT INTO sellers(name) VALUES (?)').run(name.trim()).lastInsertRowid; auditLog({actor:admin.actor,action:'Cadastro de vendedor',entityType:'vendedor',entityId:id,item:name.trim(),reason:admin.reason}); return id;
 });
 ipcMain.handle('movements:list', (_, limit=100) => db.prepare(`
   SELECT m.*,p.name product_name,p.code,s.name seller_name
   FROM movements m JOIN products p ON p.id=m.product_id LEFT JOIN sellers s ON s.id=m.seller_id
   ORDER BY m.id DESC LIMIT ?`).all(Math.min(Number(limit)||100,1000)));
 ipcMain.handle('movements:add', (_, m) => {
+  const admin=m.type==='saida'?null:requireAdmin(m);
   const qty = Math.floor(Number(m.quantity));
   if (!m.product_id || !qty || qty < 1) throw new Error('Selecione um produto e informe uma quantidade válida.');
   if (m.type === 'saida' && !m.seller_id) throw new Error('Selecione o vendedor.');
   const product = db.prepare('SELECT * FROM products WHERE id=? AND active=1').get(m.product_id);
   if (!product) throw new Error('Produto não encontrado.');
-  const signed = m.type === 'entrada' ? qty : -qty;
+  if (!['entrada','saida','perda'].includes(m.type)) throw new Error('Tipo de movimentação inválido.');
+  const oldStock=product.stock, signed = m.type === 'entrada' ? qty : -qty;
   if (m.type !== 'entrada' && product.stock < qty) throw new Error('Estoque insuficiente. Disponível: '+product.stock);
   const tx = db.transaction(() => {
     db.prepare('UPDATE products SET stock=stock+? WHERE id=?').run(signed,product.id);
     db.prepare(`INSERT INTO movements(product_id,type,quantity,seller_id,note,unit_price)
       VALUES (?,?,?,?,?,?)`).run(product.id,m.type,qty,m.seller_id||null,m.note||'',Number(m.unit_price ?? product.sale_price)||0);
+    const sellerName=m.seller_id?db.prepare('SELECT name FROM sellers WHERE id=?').get(m.seller_id)?.name:null;
+    auditLog({actor:admin?.actor||sellerName||'Venda normal',action:m.type==='saida'?'Venda registrada':m.type==='entrada'?'Entrada de estoque':'Perda registrada',entityType:'movimentação',entityId:product.id,item:product.name,oldQuantity:oldStock,newQuantity:oldStock+signed,reason:admin?.reason||String(m.note||'Venda normal').trim()});
   });
   tx(); return true;
 });
-ipcMain.handle('movements:deleteSale', (_, id) => {
+ipcMain.handle('movements:deleteSale', (_, data) => {
+  const admin=requireAdmin(data), id=data.id;
   const sale = db.prepare("SELECT id,product_id,quantity FROM movements WHERE id=? AND type='saida'").get(id);
   if (!sale) throw new Error('Venda não encontrada ou não pode ser excluída.');
+  const product=db.prepare('SELECT name,stock FROM products WHERE id=?').get(sale.product_id);
   const tx = db.transaction(() => {
     db.prepare('UPDATE products SET stock=stock+? WHERE id=?').run(sale.quantity,sale.product_id);
     db.prepare("DELETE FROM movements WHERE id=? AND type='saida'").run(id);
+    auditLog({actor:admin.actor,action:'Exclusão de venda / estorno',entityType:'venda',entityId:id,item:product.name,oldQuantity:product.stock,newQuantity:product.stock+sale.quantity,reason:admin.reason,details:{quantidadeEstornada:sale.quantity}});
   });
   tx(); return true;
 });
+ipcMain.handle('audit:list', () => db.prepare('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 500').all());
 ipcMain.handle('reports:csv', async () => {
   const rows = db.prepare(`SELECT m.id,m.created_at,m.type,p.code,p.name product,m.quantity,
     COALESCE(s.name,'—') seller,m.unit_price,(m.quantity*m.unit_price) total,m.note
