@@ -10,6 +10,7 @@
   window.estoque={
     authorizeAdmin:d=>post('/api/admin/authorize',d),
     audit:()=>request('/api/audit'),
+    stockValue:password=>post('/api/admin/stock-value',{password}),
     dashboard:()=>request('/api/dashboard'),
     categories:()=>request('/api/categories'),
     addCategory:d=>post('/api/categories',d),
