@@ -1,5 +1,5 @@
 {
-  "name": "estoque-grupo-atualize",
+  "name": "estoque-grupo-atualize-v2",
   "version": "1.0.0",
   "description": "Sistema local de estoque do Grupo Atualize",
   "main": "src/main.cjs",
@@ -17,7 +17,7 @@
     "better-sqlite3": "^11.7.0"
   },
   "build": {
-    "appId": "br.com.grupoatualize.estoque",
+    "appId": "br.com.grupoatualize.estoque.v2",
     "productName": "Estoque Grupo Atualize",
     "directories": {
       "output": "dist"
@@ -43,5 +43,6 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     }
-  }
+  },
+  "productName": "Estoque Grupo Atualize V2"
 }

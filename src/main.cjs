@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const Database = require('better-sqlite3');
 
 let db;
+// Mantém o banco de testes do V2 separado do aplicativo original.
+app.setPath('userData', path.join(app.getPath('appData'), 'estoque-grupo-atualize-v2'));
 const adminSessions = new Map();
 const ADMIN_PASSWORD = '9963';
 function requireAdmin(payload) {
