@@ -56,26 +56,19 @@ db.exec('CREATE TABLE IF NOT EXISTS web_sessions (sid TEXT PRIMARY KEY, sess TEX
 const sessionStore = new SQLiteSessionStore();
 app.use(session({ name: 'estoque.sid', store: sessionStore, secret: SESSION_SECRET, resave: false, saveUninitialized: false, cookie: { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 8 * 60 * 60 * 1000 } }));
 db.pragma('foreign_keys = ON');
-db.exec(\`
+db.exec(`
 CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Outros', unit TEXT NOT NULL DEFAULT 'un', units_per_box INTEGER, stock INTEGER NOT NULL DEFAULT 0, min_stock INTEGER NOT NULL DEFAULT 0, purchase_price REAL NOT NULL DEFAULT 0, sale_price REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS sellers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id INTEGER, item TEXT, old_quantity INTEGER, new_quantity INTEGER, reason TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS movements (id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER NOT NULL REFERENCES products(id), type TEXT NOT NULL CHECK(type IN ('entrada','saida','perda','ajuste')), quantity INTEGER NOT NULL, seller_id INTEGER REFERENCES sellers(id), note TEXT, unit_price REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
-\`);
+`);
 const cols = db.prepare('PRAGMA table_info(products)').all().map(x=>x.name);
 if (!cols.includes('units_per_box')) db.exec('ALTER TABLE products ADD COLUMN units_per_box INTEGER');
 const addCat = db.prepare('INSERT OR IGNORE INTO categories(name) VALUES (?)');
 ['Sorvetes','Lubrificantes','Outros'].forEach(x=>addCat.run(x));
 db.prepare('INSERT OR IGNORE INTO categories(name) SELECT DISTINCT category FROM products').run();
-if (!db.prepare('SELECT COUNT(*) n FROM sellers').get().n) {
-  const s=db.prepare('INSERT INTO sellers(name) VALUES (?)'); s.run('Rayane'); s.run('Bruno');
-}
-if (!db.prepare('SELECT COUNT(*) n FROM products').get().n) {
- const rows=[['51421','Cremosinho sabor leite condensado','Sorvetes',10,10],['51452','Cremosinho sabor maracujá','Sorvetes',10,10],['51438','Cremosinho sabor morango','Sorvetes',10,10],['50240','Picolé cobertura Quy Lack','Sorvetes',22,22],['50684','Picolé cobertura Tentação','Sorvetes',22,22],['50134','Picolé Milk Chocolate','Sorvetes',26,26],['50141','Picolé Milk Coco','Sorvetes',26,26],['50172','Picolé Milk Leite Condensado','Sorvetes',26,26],['50295','Picolé Sublime Mousse Maracujá','Sorvetes',null,0],['50097','Picolé Suco Morango','Sorvetes',26,26],['50073','Picolé Suco Uva','Sorvetes',26,26],['50332','Sorvete pote 2L Napolitano','Sorvetes',1,1],['50356','Sorvete pote 2L Passas','Sorvetes',1,1],['50745','Sorvete Quy Copão Napolitano','Sorvetes',null,0]];
- const ins=db.prepare('INSERT INTO products(code,name,category,unit,units_per_box,stock) VALUES (?,?,?,"un",?,?)');
- db.transaction(()=>rows.forEach(x=>ins.run(...x)))();
-}
+// Não inserir produtos de demonstração automaticamente no banco real.
 const adminSessions = new Map();
 
 const authAttempts = new Map();
@@ -118,7 +111,7 @@ app.get('/api/dashboard',(req,res)=>{
  const allProducts=db.prepare('SELECT * FROM products WHERE active=1 ORDER BY category,name').all();
  res.json({products,units,low,today,sales,totalOut,totalSales,totalLoss,monthOut,daily,categoryOut,attention,allProducts});
 });
-app.post('/api/admin/stock-value',(req,res)=>{if(String(req.body?.password||'')!==ADMIN_PASSWORD)return res.status(403).json({error:'Senha incorreta.'});const value=db.prepare('SELECT COALESCE(SUM(stock*purchase_price),0) n FROM products WHERE active=1').get().n;res.json({value})});
+app.post('/api/admin/stock-value',limitAuth,(req,res)=>{if(String(req.body?.password||'')!==ADMIN_PASSWORD)return res.status(403).json({error:'Senha incorreta.'});const value=db.prepare('SELECT COALESCE(SUM(stock*purchase_price),0) n FROM products WHERE active=1').get().n;res.json({value})});
 app.get('/api/categories',(req,res)=>res.json(db.prepare('SELECT name FROM categories ORDER BY id').all()));
 app.get('/api/products',(req,res)=>{const c=req.query.category||'Todos';res.json(c==='Todos'?db.prepare('SELECT * FROM products WHERE active=1 ORDER BY category,name').all():db.prepare('SELECT * FROM products WHERE active=1 AND category=? ORDER BY name').all(c))});
 app.get('/api/sellers',(req,res)=>res.json(db.prepare('SELECT * FROM sellers WHERE active=1 ORDER BY name').all()));
