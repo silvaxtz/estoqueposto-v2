@@ -63,18 +63,18 @@ O banco é criado em `%APPDATA%/estoque-grupo-atualize/estoque-atualize.db` (pas
 
 ## Versão web (em preparação)
 
-A branch \`web-conversion\` adiciona um servidor web que mantém o SQLite no computador que hospeda o sistema. O aplicativo desktop original e sua interface Electron permanecem preservados.
+A branch `web-conversion` adiciona um servidor web que mantém o SQLite no computador que hospeda o sistema. O aplicativo desktop original e sua interface Electron permanecem preservados.
 
 ### Inicialização no computador servidor
 
 1. Instale Node.js LTS nesse computador.
-2. Abra o terminal na pasta do projeto e execute \`npm install\`.
-3. Defina as variáveis de ambiente \`APP_ACCESS_PASSWORD\` (senha de entrada no sistema) e \`SESSION_SECRET\` (segredo longo e aleatório para as sessões).
-4. Execute \`npm run web\`.
-5. Acesse \`http://localhost:3000\` no próprio computador.
+2. Abra o terminal na pasta do projeto e execute `npm install`.
+3. Defina `APP_ACCESS_PASSWORD` (senha de entrada), `ADMIN_PASSWORD` (senha administrativa) e `SESSION_SECRET` (segredo longo e aleatório para as sessões). Use senhas fortes e não as coloque no Git.
+4. Execute `npm run web`.
+5. Acesse `http://localhost:3000` no próprio computador.
 
 A senha administrativa das operações protegidas é obrigatória e validada no servidor; não existe senha administrativa padrão no servidor web. A senha de entrada no sistema é separada e configurada pelo responsável do posto. Tentativas incorretas são limitadas e as sessões ficam armazenadas no próprio SQLite. Não coloque senhas em arquivos públicos nem no Git.
 
 **Atenção:** esta branch ainda precisa ser testada no computador que contém o banco real. Não exponha a porta do servidor diretamente à internet. Para acesso externo, configure um túnel HTTPS seguro no computador servidor. Não use esta versão em operação real antes de validar login, banco, permissões, backup e todas as movimentações com uma cópia de teste do banco. A branch ainda não foi testada em execução real nem publicada no endereço do GitHub Pages.
 
-O banco usado pelo servidor é \`%APPDATA%/estoque-grupo-atualize-v2/estoque-atualize.db\`, o mesmo caminho de dados isolado configurado pelo V2 desktop.
+O banco usado pelo servidor é `%APPDATA%/estoque-grupo-atualize-v2/estoque-atualize.db`, o mesmo caminho de dados isolado configurado pelo V2 desktop.
