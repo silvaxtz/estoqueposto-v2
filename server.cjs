@@ -72,13 +72,18 @@ db.prepare('INSERT OR IGNORE INTO categories(name) SELECT DISTINCT category FROM
 const adminSessions = new Map();
 
 const authAttempts = new Map();
+function authKey(req) { return req.ip || req.socket.remoteAddress || 'unknown'; }
 function limitAuth(req, res, next) {
-  const key = req.ip || req.socket.remoteAddress || 'unknown';
-  const now = Date.now(), entry = authAttempts.get(key) || { count: 0, reset: now + 15*60*1000 };
-  if (now > entry.reset) { entry.count = 0; entry.reset = now + 15*60*1000; }
-  if (entry.count >= 8) return res.status(429).json({ error: 'Muitas tentativas. Aguarde 15 minutos e tente novamente.' });
-  entry.count++; authAttempts.set(key, entry); next();
+  const entry = authAttempts.get(authKey(req));
+  if (entry && Date.now() < entry.reset && entry.count >= 8) return res.status(429).json({ error: 'Muitas tentativas. Aguarde 15 minutos e tente novamente.' });
+  next();
 }
+function registerAuthFailure(req) {
+  const key = authKey(req), now = Date.now(), entry = authAttempts.get(key) || { count: 0, reset: now + 15*60*1000 };
+  if (now >= entry.reset) { entry.count = 0; entry.reset = now + 15*60*1000; }
+  entry.count++; authAttempts.set(key, entry);
+}
+function clearAuthFailures(req) { authAttempts.delete(authKey(req)); }
 
 const requireLogin=(req,res,next)=>req.session?.loggedIn?next():res.status(401).json({error:'Faça login para continuar.'});
 const requireAdmin=data=>{
@@ -89,7 +94,7 @@ const requireAdmin=data=>{
 const audit=x=>db.prepare('INSERT INTO audit_logs(actor,action,entity_type,entity_id,item,old_quantity,new_quantity,reason,details) VALUES (?,?,?,?,?,?,?,?,?)').run(x.actor,x.action,x.entityType,x.entityId??null,x.item??null,x.oldQuantity??null,x.newQuantity??null,x.reason,x.details?JSON.stringify(x.details):null);
 app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'src/login.html')));
 app.post('/api/login',limitAuth,(req,res)=>{
- if(String(req.body?.password||'')!==APP_ACCESS_PASSWORD)return res.status(401).json({error:'Senha de acesso incorreta.'});
+ if(String(req.body?.password||'')!==APP_ACCESS_PASSWORD){registerAuthFailure(req);return res.status(401).json({error:'Senha de acesso incorreta.'});} clearAuthFailures(req);
  req.session.loggedIn=true; req.session.save(err=>err?res.status(500).json({error:'Não foi possível iniciar a sessão.'}):res.json({ok:true}));
 });
 app.post('/api/logout',(req,res)=>req.session.destroy(()=>{res.clearCookie('estoque.sid');res.json({ok:true})}));
@@ -111,13 +116,13 @@ app.get('/api/dashboard',(req,res)=>{
  const allProducts=db.prepare('SELECT * FROM products WHERE active=1 ORDER BY category,name').all();
  res.json({products,units,low,today,sales,totalOut,totalSales,totalLoss,monthOut,daily,categoryOut,attention,allProducts});
 });
-app.post('/api/admin/stock-value',limitAuth,(req,res)=>{if(String(req.body?.password||'')!==ADMIN_PASSWORD)return res.status(403).json({error:'Senha incorreta.'});const value=db.prepare('SELECT COALESCE(SUM(stock*purchase_price),0) n FROM products WHERE active=1').get().n;res.json({value})});
+app.post('/api/admin/stock-value',limitAuth,(req,res)=>{if(String(req.body?.password||'')!==ADMIN_PASSWORD){registerAuthFailure(req);return res.status(403).json({error:'Senha incorreta.'});} clearAuthFailures(req);const value=db.prepare('SELECT COALESCE(SUM(stock*purchase_price),0) n FROM products WHERE active=1').get().n;res.json({value})});
 app.get('/api/categories',(req,res)=>res.json(db.prepare('SELECT name FROM categories ORDER BY id').all()));
 app.get('/api/products',(req,res)=>{const c=req.query.category||'Todos';res.json(c==='Todos'?db.prepare('SELECT * FROM products WHERE active=1 ORDER BY category,name').all():db.prepare('SELECT * FROM products WHERE active=1 AND category=? ORDER BY name').all(c))});
 app.get('/api/sellers',(req,res)=>res.json(db.prepare('SELECT * FROM sellers WHERE active=1 ORDER BY name').all()));
 app.get('/api/movements',(req,res)=>res.json(db.prepare("SELECT m.*,p.name product_name,p.code,s.name seller_name FROM movements m JOIN products p ON p.id=m.product_id LEFT JOIN sellers s ON s.id=m.seller_id ORDER BY m.id DESC LIMIT ?").all(Math.min(Number(req.query.limit)||100,1000))));
 app.get('/api/audit',(req,res)=>res.json(db.prepare('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 500').all()));
-app.post('/api/admin/authorize',limitAuth,(req,res)=>{const d=req.body||{};if(String(d.password||'')!==ADMIN_PASSWORD)return res.status(403).json({error:'Senha administrativa incorreta.'});const actor=String(d.actor||'').trim(),reason=String(d.reason||'').trim();if(!actor||!reason)return res.status(400).json({error:'Informe o responsável e o motivo da operação.'});const token=crypto.randomUUID();adminSessions.set(token,{actor,reason,expiresAt:Date.now()+120000});res.json({token,actor,reason})});
+app.post('/api/admin/authorize',limitAuth,(req,res)=>{const d=req.body||{};if(String(d.password||'')!==ADMIN_PASSWORD){registerAuthFailure(req);return res.status(403).json({error:'Senha administrativa incorreta.'});} clearAuthFailures(req);const actor=String(d.actor||'').trim(),reason=String(d.reason||'').trim();if(!actor||!reason)return res.status(400).json({error:'Informe o responsável e o motivo da operação.'});const token=crypto.randomUUID();adminSessions.set(token,{actor,reason,expiresAt:Date.now()+120000});res.json({token,actor,reason})});
 app.post('/api/categories',(req,res)=>{try{const d=req.body,ad=requireAdmin(d),name=String(d.name||'').trim();if(!name)throw Error('Informe o nome da categoria.');if(name.length>40)throw Error('Use até 40 caracteres.');db.prepare('INSERT INTO categories(name) VALUES (?)').run(name);audit({actor:ad.actor,action:'Criação de categoria',entityType:'categoria',item:name,reason:ad.reason});res.json(true)}catch(e){res.status(400).json({error:e.message.includes('UNIQUE')?'Essa categoria já existe.':e.message})}});
 app.post('/api/products',(req,res)=>{try{const p=req.body,ad=requireAdmin(p);if(!p.name?.trim())throw Error('Informe o nome do produto.');let id;if(p.id){const before=db.prepare('SELECT * FROM products WHERE id=?').get(p.id);if(!before)throw Error('Produto não encontrado.');db.prepare('UPDATE products SET code=?,name=?,category=?,unit=?,units_per_box=?,min_stock=?,purchase_price=?,sale_price=? WHERE id=?').run(p.code||null,p.name.trim(),p.category,p.unit||'un',p.units_per_box||null,Number(p.min_stock)||0,Number(p.purchase_price)||0,Number(p.sale_price)||0,p.id);id=p.id;audit({actor:ad.actor,action:'Edição de produto',entityType:'produto',entityId:id,item:p.name,oldQuantity:before.stock,newQuantity:before.stock,reason:ad.reason,details:{antes:before,depois:db.prepare('SELECT * FROM products WHERE id=?').get(id)}})}else{id=db.prepare('INSERT INTO products(code,name,category,unit,units_per_box,stock,min_stock,purchase_price,sale_price) VALUES (?,?,?,?,?,?,?,?,?)').run(p.code||null,p.name.trim(),p.category,p.unit||'un',p.units_per_box||null,Number(p.units_per_box)||0,Number(p.min_stock)||0,Number(p.purchase_price)||0,Number(p.sale_price)||0).lastInsertRowid;audit({actor:ad.actor,action:'Cadastro de produto',entityType:'produto',entityId:id,item:p.name,oldQuantity:0,newQuantity:Number(p.units_per_box)||0,reason:ad.reason})}res.json(id)}catch(e){res.status(400).json({error:e.message})}});
 app.post('/api/products/deactivate',(req,res)=>{try{const d=req.body,ad=requireAdmin(d),p=db.prepare('SELECT * FROM products WHERE id=? AND active=1').get(d.id);if(!p)throw Error('Produto não encontrado.');const n=db.prepare('UPDATE products SET active=0 WHERE id=?').run(d.id).changes;if(n)audit({actor:ad.actor,action:'Desativação de produto',entityType:'produto',entityId:d.id,item:p.name,oldQuantity:p.stock,newQuantity:p.stock,reason:ad.reason});res.json(n)}catch(e){res.status(400).json({error:e.message})}});
